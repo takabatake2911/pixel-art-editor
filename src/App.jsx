@@ -1529,27 +1529,96 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     [getCell, push, live, commitFloat, recordColor],
   );
 
+  // onLeave: only clear cursor & preview for non-shape tools.
+  // Shape tools keep sc/preview alive so the drag continues outside the canvas.
+  // sel/pixDrg operations also continue outside, so don't cancel them here either.
   const onLeave = useCallback(() => {
     setCur(null);
     curRef.current = null;
-    setPreview([]);
-    if (selDrgRef.current) {
-      setSelDrg(false);
-      return;
+    const t = toolRef.current;
+    const isShapeDraw = drawingRef.current && SHAPE_TOOLS.includes(t);
+    const isSelOp = selDrgRef.current || selMovRef.current || pixDrgRef.current;
+    if (!isShapeDraw && !isSelOp) {
+      // pen/eraser leaving: clear preview & sc so brush cursor disappears
+      setPreview([]);
+      setSc(null);
     }
-    if (selMovRef.current) {
-      setSelMov(false);
-      setSelMovSt(null);
-      return;
-    }
-    if (pixDrgRef.current) {
-      setPixDrg(false);
-      setPixDrgSt(null);
-      if (!isPasteRef.current) commitFloat(selRef.current);
-      return;
-    }
-    setSc(null);
+    // For shape tools mid-draw: leave sc and preview intact so they stay visible
+    // and the global mousemove + mouseup can finish the shape.
   }, [commitFloat, setCur, setPreview, setSc]);
+
+  // Global mousemove: tracks cursor outside the canvas for shapes & selections.
+  useEffect(() => {
+    const onGlobalMove = (e) => {
+      const t = toolRef.current;
+      const isShapeDraw = drawingRef.current && SHAPE_TOOLS.includes(t);
+      const isSelOp =
+        selDrgRef.current || selMovRef.current || pixDrgRef.current;
+      if (!isShapeDraw && !isSelOp) return;
+
+      const [x, y] = (() => {
+        const c = canvasRef.current;
+        if (!c) return [0, 0];
+        const r = c.getBoundingClientRect();
+        return [
+          Math.floor((e.clientX - r.left) / zoomRef.current),
+          Math.floor((e.clientY - r.top) / zoomRef.current),
+        ];
+      })();
+
+      const w = gWRef.current,
+        h = gHRef.current;
+
+      if (selDrgRef.current && selStRef.current) {
+        const ss = selStRef.current;
+        const cx = Math.max(0, Math.min(w - 1, x));
+        const cy = Math.max(0, Math.min(h - 1, y));
+        setSel({
+          x: Math.min(ss[0], cx),
+          y: Math.min(ss[1], cy),
+          w: Math.abs(cx - ss[0]) + 1,
+          h: Math.abs(cy - ss[1]) + 1,
+        });
+        return;
+      }
+      if (selMovRef.current && selMovStRef.current) {
+        const [ox, oy] = selMovStRef.current,
+          dx = x - ox,
+          dy = y - oy;
+        if (dx || dy) {
+          setSel((r) => (r ? { ...r, x: r.x + dx, y: r.y + dy } : r));
+          setSelMovSt([x, y]);
+        }
+        return;
+      }
+      if (pixDrgRef.current && pixDrgStRef.current) {
+        const [ox, oy] = pixDrgStRef.current,
+          dx = x - ox,
+          dy = y - oy;
+        if (dx || dy) {
+          setSel((r) => (r ? { ...r, x: r.x + dx, y: r.y + dy } : r));
+          setPixDrgSt([x, y]);
+        }
+        return;
+      }
+      if (isShapeDraw) {
+        const s = scRef.current;
+        if (!s) return;
+        // No clamping: allow endpoint outside canvas so partial shapes render correctly.
+        let [ex, ey] = [x, y];
+        if (shiftRef.current)
+          [ex, ey] = constrainEndpoint(t, s[0], s[1], ex, ey);
+        let pts = shapePx(t, s[0], s[1], ex, ey);
+        if (BRUSH_APPLIES_TO.has(t)) {
+          pts = expandShapePx(pts, bSzRef.current, bShRef.current, w, h);
+        }
+        setPreview(pts);
+      }
+    };
+    window.addEventListener("mousemove", onGlobalMove);
+    return () => window.removeEventListener("mousemove", onGlobalMove);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasRef, setSel, setSelMovSt, setPixDrgSt, setPreview]);
 
   useEffect(() => {
     const h = (e) => {
@@ -1581,12 +1650,37 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
         const t = toolRef.current,
           ls = layersRef.current,
           idx = aiRef.current;
+        const layer = ls[idx];
+        const w = gWRef.current,
+          h = gHRef.current;
+        const s = scRef.current;
         if ((t === T.PEN || t === T.ERASER) && pending.current) {
           live(
             ls.map((l, i) => (i === idx ? { ...l, grid: pending.current } : l)),
           );
           pending.current = null;
           if (t === T.PEN) recordColor(colorRef.current);
+        } else if (SHAPE_TOOLS.includes(t) && s && layer && !layer.locked) {
+          // No clamping: use raw canvas-relative coords so partial shapes work.
+          // The per-pixel guard below clips anything outside the grid.
+          const c = canvasRef.current;
+          const r = c ? c.getBoundingClientRect() : null;
+          let rx = r
+            ? Math.floor((e.clientX - r.left) / zoomRef.current)
+            : s[0];
+          let ry = r ? Math.floor((e.clientY - r.top) / zoomRef.current) : s[1];
+          if (shiftRef.current)
+            [rx, ry] = constrainEndpoint(t, s[0], s[1], rx, ry);
+          const col = colorRef.current;
+          let pts = shapePx(t, s[0], s[1], rx, ry);
+          if (BRUSH_APPLIES_TO.has(t)) {
+            pts = expandShapePx(pts, bSzRef.current, bShRef.current, w, h);
+          }
+          let g = clone(layer.grid);
+          for (const [px, py] of pts)
+            if (px >= 0 && px < w && py >= 0 && py < h) g[py][px] = col;
+          push(ls.map((l, i) => (i === idx ? { ...l, grid: g } : l)));
+          recordColor(col);
         }
         setDrawing(false);
         setSc(null);
