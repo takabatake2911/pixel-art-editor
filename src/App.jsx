@@ -96,22 +96,22 @@ const DW = 32,
   MINZ = 1,
   MINIMAX = 120;
 const PAL = [
-  "#000000", // 黒
-  "#FFFFFF", // 白
-  "#888888", // グレー
-  "#F2ACB2", // イラスト-1 ピンク
-  "#346173", // イラスト-2 ダークブルー
-  "#F2C641", // イラスト-3 イエロー
-  "#F2B33D", // イラスト-4 オレンジ
-  "#F2E9D8", // イラスト-5 クリーム
-  "#A3D2CA", // ミント
-  "#FF9F80", // コーラル
-  "#6D597A", // モーブパープル
-  "#FFE156", // パステルイエロー
-  "#6B4226", // ブラウン系
-  "#5D5C61", // ダークグレー
-  "#C7F9CC", // パステルグリーン
-  "#FF6B6B", // レッドアクセント
+  "#000000",
+  "#FFFFFF",
+  "#888888",
+  "#F2ACB2",
+  "#346173",
+  "#F2C641",
+  "#F2B33D",
+  "#F2E9D8",
+  "#A3D2CA",
+  "#FF9F80",
+  "#6D597A",
+  "#FFE156",
+  "#6B4226",
+  "#5D5C61",
+  "#C7F9CC",
+  "#FF6B6B",
 ];
 
 const SHORTCUTS = [
@@ -147,7 +147,7 @@ const theme = createTheme({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 2 — Pure pixel-math utilities  (no React, fully testable)
+// SECTION 2 — Pure pixel-math utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mkGrid = (w, h) => Array.from({ length: h }, () => Array(w).fill(null));
@@ -294,8 +294,34 @@ function applyBrush(g, cx, cy, col, sz, shape, w, h) {
   return n;
 }
 
+// FIX 1: Expand shape pixels by brush size.
+// For outline tools (LINE, RECT outline, CIRCLE outline), each skeleton pixel
+// is expanded by the brush kernel so the stroke renders at the chosen thickness.
+// Filled tools (RECTF, CIRCLEF) are left unchanged — thickness doesn't apply.
+const BRUSH_APPLIES_TO = new Set([T.LINE, T.RECT, T.CIRCLE]);
+
+function expandShapePx(pts, sz, shape, w, h) {
+  if (sz <= 1) return pts;
+  const seen = new Set();
+  const out = [];
+  const offsets = brushOff(sz, shape);
+  for (const [cx, cy] of pts) {
+    for (const [dx, dy] of offsets) {
+      const x = cx + dx,
+        y = cy + dy;
+      if (x < 0 || x >= w || y < 0 || y >= h) continue;
+      const k = `${x},${y}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push([x, y]);
+      }
+    }
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 3 — Layer factory & history reducer  (pure functions)
+// SECTION 3 — Layer factory & history reducer
 // ─────────────────────────────────────────────────────────────────────────────
 
 let _lid = 0;
@@ -342,9 +368,6 @@ function histReducer(s, a) {
 // SECTION 4 — Shared primitive hooks
 // ─────────────────────────────────────────────────────────────────────────────
 
-// useTracked: mirrors a state value into a ref so event-handler closures that
-// were set up once (useCallback / RAF loop) can read the latest value without
-// being re-created on every render.
 function useTracked(val) {
   const r = useRef(val);
   useEffect(() => {
@@ -355,16 +378,12 @@ function useTracked(val) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SECTION 5 — useEditorState hook
-// Owns every piece of application state and the operations that mutate it.
-// Returns a single "store" object consumed by child components and hooks.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function useEditorState() {
-  // Canvas dimensions
   const [gW, setGW] = useState(DW);
   const [gH, setGH] = useState(DH);
 
-  // Layer history
   const init = useMemo(() => {
     _lid = 0;
     return mkLayer(DW, DH, "Background");
@@ -375,10 +394,9 @@ function useEditorState() {
     future: [],
   });
   const layers = hist.present;
-  const [ai, setAi] = useState(0); // active layer index
-  const AL = layers[Math.min(ai, layers.length - 1)] ?? layers[0]; // active layer object
+  const [ai, setAi] = useState(0);
+  const AL = layers[Math.min(ai, layers.length - 1)] ?? layers[0];
 
-  // Tools & view
   const [color, setColor] = useState("#000000");
   const [tool, setTool] = useState(T.PEN);
   const [zoom, setZoom] = useState(16);
@@ -387,12 +405,10 @@ function useEditorState() {
   const [brushSz, setBrushSz] = useState(1);
   const [brushSh, setBrushSh] = useState("square");
 
-  // Drawing stroke state
   const [drawing, setDrawing] = useState(false);
-  const [sc, setSc] = useState(null); // stroke start cell [x,y]
-  const [preview, setPreview] = useState([]); // shape preview pixels
+  const [sc, setSc] = useState(null);
+  const [preview, setPreview] = useState([]);
 
-  // Selection & float-layer state
   const [sel, setSel] = useState(null);
   const [selDrg, setSelDrg] = useState(false);
   const [selSt, setSelSt] = useState(null);
@@ -401,11 +417,10 @@ function useEditorState() {
   const [selMovSt, setSelMovSt] = useState(null);
   const [pixDrg, setPixDrg] = useState(false);
   const [pixDrgSt, setPixDrgSt] = useState(null);
-  const [floatPx, setFloatPx] = useState(null); // [{dx,dy,col}]
+  const [floatPx, setFloatPx] = useState(null);
   const [baseGrid, setBaseGrid] = useState(null);
   const [isPaste, setIsPaste] = useState(false);
 
-  // Cursor position & color history
   const [cur, setCur] = useState(null);
   const [colorHist, setColorHist] = useState([]);
   const recordColor = useCallback(
@@ -413,16 +428,13 @@ function useEditorState() {
     [],
   );
 
-  // Dialog open/close
   const [resizeOpen, setResizeOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [sizeInp, setSizeInp] = useState({ w: DW, h: DH });
 
-  // Layer panel drag state
   const [drgLay, setDrgLay] = useState(null);
   const [drgOver, setDrgOver] = useState(null);
 
-  // Derived dispatch shortcuts
   const push = useCallback((v) => dispatch({ type: "PUSH", v }), []);
   const live = useCallback((v) => dispatch({ type: "LIVE", v }), []);
   const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
@@ -430,7 +442,6 @@ function useEditorState() {
   const canUndo = hist.past.length > 0;
   const canRedo = hist.future.length > 0;
 
-  // ── Layer operations ──────────────────────────────────────────────────────
   const addLayer = () => {
     const l = mkLayer(gW, gH);
     push([l, ...layers]);
@@ -506,7 +517,6 @@ function useEditorState() {
     setDrgOver(null);
   };
 
-  // ── Float / paste operations ──────────────────────────────────────────────
   const commitFloat = useCallback(
     (finalSel) => {
       const fp = floatPxRef.current,
@@ -538,7 +548,6 @@ function useEditorState() {
     setSel(null);
   }, []);
 
-  // ── Selection operations ──────────────────────────────────────────────────
   const selCopy = useCallback(() => {
     const sr = selRef.current;
     if (!sr) return;
@@ -607,7 +616,6 @@ function useEditorState() {
     setTool(T.SEL);
   }, []);
 
-  // selPaste reads clip via closure — must be in deps
   const selPaste = useCallback(
     (c) => {
       if (!c) return;
@@ -629,7 +637,6 @@ function useEditorState() {
     [commitFloat],
   );
 
-  // ── Flip ──────────────────────────────────────────────────────────────────
   const flip = useCallback(
     (dir) => {
       const ls = layersRef.current,
@@ -648,7 +655,6 @@ function useEditorState() {
     [push],
   );
 
-  // ── Import / Export ───────────────────────────────────────────────────────
   const importImg = useCallback(
     (file) => {
       if (!file) return;
@@ -735,7 +741,6 @@ function useEditorState() {
   const clearLay = () =>
     push(layers.map((l, i) => (i === ai ? { ...l, grid: mkGrid(gW, gH) } : l)));
 
-  // ── Tracked refs (all state values mirrored for closure-free handlers) ────
   const gWRef = useTracked(gW);
   const gHRef = useTracked(gH);
   const zoomRef = useTracked(zoom);
@@ -759,12 +764,10 @@ function useEditorState() {
   const isPasteRef = useTracked(isPaste);
 
   return {
-    // dimensions
     gW,
     gH,
     setGW,
     setGH,
-    // history
     hist,
     dispatch,
     layers,
@@ -777,7 +780,6 @@ function useEditorState() {
     redo,
     push,
     live,
-    // tools
     color,
     setColor,
     tool,
@@ -792,14 +794,12 @@ function useEditorState() {
     setBrushSz,
     brushSh,
     setBrushSh,
-    // drawing
     drawing,
     setDrawing,
     sc,
     setSc,
     preview,
     setPreview,
-    // selection & float
     sel,
     setSel,
     selDrg,
@@ -822,25 +822,21 @@ function useEditorState() {
     setBaseGrid,
     isPaste,
     setIsPaste,
-    // cursor & color history
     cur,
     setCur,
     colorHist,
     recordColor,
-    // dialogs
     resizeOpen,
     setResizeOpen,
     exportOpen,
     setExportOpen,
     sizeInp,
     setSizeInp,
-    // layer panel drag
     drgLay,
     drgOver,
     onLDrgStart,
     onLDrgOver,
     onLDrop,
-    // operations
     addLayer,
     delLayer,
     upLayer,
@@ -860,7 +856,6 @@ function useEditorState() {
     exportImg,
     resizeApply,
     clearLay,
-    // tracked refs (needed by interaction hook & canvas hook)
     gWRef,
     gHRef,
     zoomRef,
@@ -887,8 +882,6 @@ function useEditorState() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SECTION 6 — useCanvasInteraction hook
-// Owns all mouse event handlers and the canvas/overlay render loops.
-// Receives the store from useEditorState and a set of canvas refs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
@@ -948,7 +941,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     isPasteRef,
   } = store;
 
-  // RAF-readable refs that don't need to come from store
   const curRef = useRef(null);
   const shiftRef = useRef(false);
   const bszAnim = useRef(brushSz);
@@ -964,7 +956,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
   const dashOff = useRef(0);
   const pending = useRef(null);
 
-  // ── getCursor: canvas cursor style ───────────────────────────────────────
   const cursor =
     tool === T.PICK
       ? "crosshair"
@@ -978,7 +969,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
               ? "none"
               : "crosshair";
 
-  // ── getCell: pixel coordinates from mouse event ───────────────────────────
   const getCell = useCallback(
     (cx, cy) => {
       const c = canvasRef.current;
@@ -992,7 +982,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     [canvasRef, zoomRef],
   );
 
-  // ── Main canvas render ────────────────────────────────────────────────────
   const drawMain = useCallback(() => {
     const c = canvasRef.current;
     if (!c) return;
@@ -1003,16 +992,11 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
       c.width = W;
       c.height = H;
     }
-    // Transparent background (checkerboard or solid)
-    if (true) {
-      // showGrid controls this via layers render, bg always drawn
-      for (let y = 0; y < gH; y++)
-        for (let x = 0; x < gW; x++) {
-          ctx.fillStyle = (x + y) % 2 === 0 ? "#d0d0d0" : "#b8b8b8";
-          ctx.fillRect(x * zoom, y * zoom, zoom, zoom);
-        }
-    }
-    // Layers bottom→top
+    for (let y = 0; y < gH; y++)
+      for (let x = 0; x < gW; x++) {
+        ctx.fillStyle = (x + y) % 2 === 0 ? "#d0d0d0" : "#b8b8b8";
+        ctx.fillRect(x * zoom, y * zoom, zoom, zoom);
+      }
     for (let li = layers.length - 1; li >= 0; li--) {
       const { grid, visible, opacity } = layers[li];
       if (!visible || !opacity) continue;
@@ -1025,7 +1009,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
           }
     }
     ctx.globalAlpha = 1;
-    // Float pixels (paste / move)
     if (floatPx && sel) {
       for (const { dx, dy, col } of floatPx) {
         const px = sel.x + dx,
@@ -1036,7 +1019,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
         }
       }
     }
-    // Shape preview
     const pc = tool === T.ERASER ? null : color;
     for (const [px, py] of preview) {
       if (px < 0 || px >= gW || py < 0 || py >= gH) continue;
@@ -1048,7 +1030,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
         ctx.fillRect(px * zoom, py * zoom, zoom, zoom);
       }
     }
-    // Grid lines
     if (zoom >= 3) {
       ctx.globalAlpha = 0.1;
       ctx.strokeStyle = "#000";
@@ -1080,11 +1061,11 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     sel,
     isPaste,
   ]);
+
   useEffect(() => {
     drawMain();
   }, [drawMain]);
 
-  // Overlay size sync
   useEffect(() => {
     const ov = overlayRef.current;
     if (!ov) return;
@@ -1096,14 +1077,12 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     }
   }, [overlayRef, gW, gH, zoom]);
 
-  // ── RAF loop: marching ants + brush cursor ────────────────────────────────
   useEffect(() => {
     const draw = () => {
       const ov = overlayRef.current;
       if (!ov) return;
       const ctx = ov.getContext("2d");
       ctx.clearRect(0, 0, ov.width, ov.height);
-      // Marching ants
       const sr = selRef.current;
       if (sr) {
         const z = zoomRef.current,
@@ -1130,7 +1109,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
         ctx.fillStyle = "rgba(0,229,255,0.04)";
         ctx.fillRect(x * z, y * z, w * z, h * z);
       }
-      // Brush cursor
       const t = toolRef.current,
         cur = curRef.current,
         isDrawing = drawingRef.current;
@@ -1246,7 +1224,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Zoom/pinch via wheel
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -1280,7 +1257,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     };
   }, [containerRef, setZoom]);
 
-  // ── Mouse event handlers ──────────────────────────────────────────────────
   const onDown = useCallback(
     (e) => {
       if (e.button !== 0 && e.button !== 2) return;
@@ -1292,7 +1268,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
         ls = layersRef.current,
         idx = aiRef.current;
       const layer = ls[idx];
-      // Right-click erase
       if (isRight && t !== T.SEL && t !== T.PICK) {
         if (!layer || layer.locked || x < 0 || x >= w || y < 0 || y >= h)
           return;
@@ -1478,7 +1453,12 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
         let [ex, ey] = [x, y];
         if (shiftRef.current && SHAPE_TOOLS.includes(t))
           [ex, ey] = constrainEndpoint(t, s[0], s[1], x, y);
-        setPreview(shapePx(t, s[0], s[1], ex, ey));
+        // FIX 1: expand preview pixels by brush size for applicable tools
+        let pts = shapePx(t, s[0], s[1], ex, ey);
+        if (BRUSH_APPLIES_TO.has(t)) {
+          pts = expandShapePx(pts, bSzRef.current, bShRef.current, w, h);
+        }
+        setPreview(pts);
       }
     },
     [
@@ -1531,8 +1511,12 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
       } else if (SHAPE_TOOLS.includes(t) && s && layer && !layer.locked) {
         let [ex, ey] = [x, y];
         if (shiftRef.current) [ex, ey] = constrainEndpoint(t, s[0], s[1], x, y);
-        const col = colorRef.current,
-          pts = shapePx(t, s[0], s[1], ex, ey);
+        const col = colorRef.current;
+        // FIX 1: expand committed shape pixels by brush size for applicable tools
+        let pts = shapePx(t, s[0], s[1], ex, ey);
+        if (BRUSH_APPLIES_TO.has(t)) {
+          pts = expandShapePx(pts, bSzRef.current, bShRef.current, w, h);
+        }
         let g = clone(layer.grid);
         for (const [px, py] of pts)
           if (px >= 0 && px < w && py >= 0 && py < h) g[py][px] = col;
@@ -1567,7 +1551,6 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
     setSc(null);
   }, [commitFloat, setCur, setPreview, setSc]);
 
-  // Global mouseup (catches releases outside canvas)
   useEffect(() => {
     const h = (e) => {
       if (e.button !== 0 && e.button !== 2) return;
@@ -1590,7 +1573,7 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
       }
       if (pixDrgRef.current) {
         setPixDrg(false);
-        setPixDrgStRef(null);
+        setPixDrgSt(null);
         if (!isPasteRef.current) commitFloat(selRef.current);
         return;
       }
@@ -1618,12 +1601,8 @@ function useCanvasInteraction(store, canvasRef, overlayRef, containerRef) {
   return { cursor, shiftRef, onDown, onMove, onUp, onLeave };
 }
 
-// helper used inside global mouseup — needs to be available
-function setPixDrgStRef() {} // placeholder; actual state setter passed through store
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SECTION 7 — useKeyboard hook
-// Registers all keyboard shortcuts. Reads operations from store.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function useKeyboard(store, shiftRef) {
@@ -1851,6 +1830,7 @@ const LayerThumb = memo(({ layer, gW, gH }) => {
     />
   );
 });
+
 const LayerRow = memo(
   ({
     layer,
@@ -1923,14 +1903,12 @@ const LayerRow = memo(
       >
         <LayerThumb layer={layer} gW={gW} gH={gH} />
       </Box>
-
-      {/* Layer Name 編集 */}
       <TextField
         size="small"
         value={layer.name}
         variant="standard"
-        onClick={(e) => e.stopPropagation()} // 親のクリック無効化
-        onChange={(e) => upLayer(idx, { name: e.target.value })} // 直接更新
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => upLayer(idx, { name: e.target.value })}
         sx={{
           flex: 1,
           "& input": { fontSize: 11, py: 0 },
@@ -1940,8 +1918,6 @@ const LayerRow = memo(
           },
         }}
       />
-
-      {/* Visibility */}
       <Tooltip title={layer.visible ? "Hide" : "Show"} placement="top">
         <IconButton
           size="small"
@@ -1958,8 +1934,6 @@ const LayerRow = memo(
           )}
         </IconButton>
       </Tooltip>
-
-      {/* Lock */}
       <Tooltip title={layer.locked ? "Unlock" : "Lock"} placement="top">
         <IconButton
           size="small"
@@ -1979,6 +1953,7 @@ const LayerRow = memo(
     </Box>
   ),
 );
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SECTION 10 — Panel tab components
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2008,7 +1983,6 @@ function ColorTab({ store }) {
         flex: 1,
       }}
     >
-      {/* Active color */}
       <Box>
         <Typography
           variant="overline"
@@ -2057,11 +2031,7 @@ function ColorTab({ store }) {
               flex: 1,
               "& input": { fontFamily: "monospace", fontSize: 12, py: 0.7 },
             }}
-            slotProps={{
-              input: {
-                maxLength: 7, // ← inputProps の代わり
-              },
-            }}
+            slotProps={{ input: { maxLength: 7 } }}
           />
         </Box>
         {colorHist.length > 0 && (
@@ -2100,7 +2070,6 @@ function ColorTab({ store }) {
           </Box>
         )}
       </Box>
-      {/* Brush */}
       <Box>
         <Typography
           variant="overline"
@@ -2158,9 +2127,20 @@ function ColorTab({ store }) {
             </Button>
           ))}
         </Box>
+        {/* FIX 1: hint that brush size affects shape tools too */}
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.disabled",
+            fontSize: 9,
+            mt: 0.5,
+            display: "block",
+          }}
+        >
+          Brush size applies to pen, eraser, line & rect/circle outlines
+        </Typography>
       </Box>
       <Divider />
-      {/* Palette */}
       <Box>
         <Typography
           variant="overline"
@@ -2175,7 +2155,6 @@ function ColorTab({ store }) {
         </Box>
       </Box>
       <Divider />
-      {/* Custom colors */}
       <Box>
         <Box
           sx={{
@@ -2232,7 +2211,6 @@ function ColorTab({ store }) {
         </Box>
       </Box>
       <Divider />
-      {/* Shortcuts reference */}
       <Box>
         <Typography
           variant="overline"
@@ -2293,7 +2271,6 @@ function LayersTab({ store }) {
     onLDrgOver,
     onLDrop,
   } = store;
-
   return (
     <Box
       sx={{
@@ -2303,7 +2280,6 @@ function LayersTab({ store }) {
         overflow: "hidden",
       }}
     >
-      {/* Toolbar */}
       <Box
         sx={{
           display: "flex",
@@ -2368,7 +2344,6 @@ function LayersTab({ store }) {
           </span>
         </Tooltip>
       </Box>
-      {/* Layer list */}
       <Box
         sx={{
           flex: 1,
@@ -2403,7 +2378,6 @@ function LayersTab({ store }) {
           />
         ))}
       </Box>
-      {/* Opacity slider */}
       <Box sx={{ p: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
         <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.5 }}>
           <Typography
@@ -2438,6 +2412,7 @@ function LayersTab({ store }) {
   );
 }
 
+// FIX 2: MapTab receives mmRef and renders the canvas directly — always mounted.
 function MapTab({ store, mmRef }) {
   const { gW, gH, zoom, layers, hist, AL } = store;
   return (
@@ -3066,6 +3041,8 @@ function CanvasArea({
   );
 }
 
+// FIX 2: RightPanel renders all three tab content areas always, using
+// visibility/display switching so the minimap canvas is never unmounted.
 function RightPanel({ store, mmRef }) {
   const [tab, setTab] = useState(0);
   const { layers } = store;
@@ -3121,16 +3098,43 @@ function RightPanel({ store, mmRef }) {
         />
       </Tabs>
       <Divider />
-      {tab === 0 && <ColorTab store={store} />}
-      {tab === 1 && <LayersTab store={store} />}
-      {tab === 2 && <MapTab store={store} mmRef={mmRef} />}
+      {/* Always render all panels; hide inactive ones so canvas refs stay mounted */}
+      <Box
+        sx={{
+          display: tab === 0 ? "flex" : "none",
+          flexDirection: "column",
+          flex: 1,
+          overflow: "hidden",
+        }}
+      >
+        <ColorTab store={store} />
+      </Box>
+      <Box
+        sx={{
+          display: tab === 1 ? "flex" : "none",
+          flexDirection: "column",
+          flex: 1,
+          overflow: "hidden",
+        }}
+      >
+        <LayersTab store={store} />
+      </Box>
+      <Box
+        sx={{
+          display: tab === 2 ? "flex" : "none",
+          flexDirection: "column",
+          flex: 1,
+          overflow: "hidden",
+        }}
+      >
+        <MapTab store={store} mmRef={mmRef} />
+      </Box>
     </Box>
   );
 }
 
 function ResizeDialog({ store }) {
   const { resizeOpen, setResizeOpen, sizeInp, setSizeInp, resizeApply } = store;
-  const [local, setLocal] = useState(sizeInp);
   return (
     <Dialog
       open={resizeOpen}
@@ -3151,9 +3155,7 @@ function ResizeDialog({ store }) {
             size="small"
             fullWidth
             value={sizeInp[k]}
-            slotProps={{
-              input: { min: 1, max: 512 }, // ← inputProps の代わり
-            }}
+            slotProps={{ input: { min: 1, max: 512 } }}
             onChange={(e) =>
               setSizeInp((s) => ({ ...s, [k]: +e.target.value }))
             }
@@ -3237,7 +3239,7 @@ function ExportDialog({ store }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 12 — Minimap effect (co-located with Map data concern)
+// SECTION 12 — Minimap effect
 // ─────────────────────────────────────────────────────────────────────────────
 
 function useMinimap(store, mmRef) {
@@ -3270,18 +3272,16 @@ function useMinimap(store, mmRef) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 13 — App: root component, wires everything together
+// SECTION 13 — App root
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  // DOM refs passed to hooks and components
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const containerRef = useRef(null);
   const mmRef = useRef(null);
   const fileRef = useRef(null);
 
-  // Hooks — each owns a distinct concern
   const store = useEditorState();
   const interaction = useCanvasInteraction(
     store,
