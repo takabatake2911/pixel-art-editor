@@ -3206,6 +3206,7 @@ function ExportDialog({ store }) {
             [2, "PNG (2×)"],
             [4, "PNG (4×)"],
             [8, "PNG (8×)"],
+            [40, "PNG (40×)"],
           ].map(([s, l]) => (
             <Button
               key={s}
