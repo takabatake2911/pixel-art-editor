@@ -1,0 +1,41 @@
+# Node modules
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Vite cache
+.vite/
+.vite/deps/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# ESLint cache
+.eslintcache
+
+# Misc
+*.bak
+*.tmp
+
+eslint.config.js
+package-lock.json
